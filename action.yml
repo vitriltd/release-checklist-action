@@ -1,5 +1,5 @@
 name: Release Checklist
-description: Parses [release: ...] tags from commits and PRs and posts a sign-off checklist on the open Release Please PR
+description: "Parses [release: ...] tags from commits and PRs and posts a sign-off checklist on the open Release Please PR"
 author: vitriltd
 branding:
   icon: check-square
