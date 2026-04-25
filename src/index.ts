@@ -6,7 +6,7 @@ import { parseExistingChecklist, renderChecklist } from "./comment";
 import {
   findExistingChecklistComment,
   findReleasePleasePR,
-  listCommitSources,
+  listReleaseCandidateCommits,
   upsertChecklistComment,
 } from "./github";
 
@@ -25,8 +25,8 @@ async function run(): Promise<void> {
     }
     core.info(`Found Release Please PR #${pr.number}`);
 
-    const sources = await listCommitSources(octokit, ctx, pr.number);
-    core.info(`Loaded ${sources.length} commits from PR`);
+    const sources = await listReleaseCandidateCommits(octokit, ctx, baseBranch);
+    core.info(`Loaded ${sources.length} candidate commit(s) from ${baseBranch} since last release`);
 
     const withdrawnShas = computeWithdrawnShas(sources);
     if (withdrawnShas.size > 0) {

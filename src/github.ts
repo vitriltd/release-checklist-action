@@ -46,40 +46,83 @@ export async function findReleasePleasePR(
   return null;
 }
 
-export async function listCommitSources(
+export async function listReleaseCandidateCommits(
   octokit: Octokit,
   ctx: RepoContext,
-  prNumber: number
+  baseBranch: string
 ): Promise<CommitSource[]> {
-  const commits = await octokit.paginate(octokit.rest.pulls.listCommits, {
+  // The Release Please PR's own branch holds a single squashed commit, so we
+  // can't read the source commits from `pulls/{number}/commits`. Instead,
+  // walk `main` back to the last release tag and use that range.
+  const lastReleaseSha = await resolveLastReleaseSha(octokit, ctx);
+
+  const allCommits = await octokit.paginate(octokit.rest.repos.listCommits, {
     ...ctx,
-    pull_number: prNumber,
+    sha: baseBranch,
     per_page: 100,
   });
 
+  const candidates: typeof allCommits = [];
+  for (const c of allCommits) {
+    if (lastReleaseSha && c.sha === lastReleaseSha) break;
+    candidates.push(c);
+  }
+  candidates.reverse(); // chronological: oldest first
+
   const sources: CommitSource[] = [];
-  for (const c of commits) {
-    const sha = c.sha;
-    const message = c.commit.message;
+  for (const c of candidates) {
     let prBody: string | null = null;
     try {
-      const { data: associated } = await octokit.rest.repos.listPullRequestsAssociatedWithCommit({
-        ...ctx,
-        commit_sha: sha,
-      });
+      const { data: associated } =
+        await octokit.rest.repos.listPullRequestsAssociatedWithCommit({
+          ...ctx,
+          commit_sha: c.sha,
+        });
       const merged = associated.find((p) => p.merged_at) ?? associated[0];
       if (merged?.body) prBody = merged.body;
     } catch {
-      // Ignore — commit-to-PR association is best-effort.
+      // Best-effort.
     }
     sources.push({
-      sha,
-      shortSha: sha.slice(0, 7),
-      message,
+      sha: c.sha,
+      shortSha: c.sha.slice(0, 7),
+      message: c.commit.message,
       prBody,
     });
   }
   return sources;
+}
+
+async function resolveLastReleaseSha(
+  octokit: Octokit,
+  ctx: RepoContext
+): Promise<string | null> {
+  let tagName: string | undefined;
+  try {
+    const { data: latestRelease } = await octokit.rest.repos.getLatestRelease({ ...ctx });
+    tagName = latestRelease.tag_name;
+  } catch {
+    return null; // No releases yet — first release.
+  }
+  if (!tagName) return null;
+
+  try {
+    const { data: ref } = await octokit.rest.git.getRef({
+      ...ctx,
+      ref: `tags/${tagName}`,
+    });
+    if (ref.object.type === "tag") {
+      // Annotated tag — dereference to commit.
+      const { data: tag } = await octokit.rest.git.getTag({
+        ...ctx,
+        tag_sha: ref.object.sha,
+      });
+      return tag.object.sha;
+    }
+    return ref.object.sha;
+  } catch {
+    return null;
+  }
 }
 
 export async function findExistingChecklistComment(

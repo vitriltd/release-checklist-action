@@ -30055,7 +30055,7 @@ function formatDate(d) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.findReleasePleasePR = findReleasePleasePR;
-exports.listCommitSources = listCommitSources;
+exports.listReleaseCandidateCommits = listReleaseCandidateCommits;
 exports.findExistingChecklistComment = findExistingChecklistComment;
 exports.upsertChecklistComment = upsertChecklistComment;
 const comment_1 = __nccwpck_require__(2246);
@@ -30075,37 +30075,76 @@ async function findReleasePleasePR(octokit, ctx, baseBranch) {
         return { number: byBot.number };
     return null;
 }
-async function listCommitSources(octokit, ctx, prNumber) {
-    const commits = await octokit.paginate(octokit.rest.pulls.listCommits, {
+async function listReleaseCandidateCommits(octokit, ctx, baseBranch) {
+    // The Release Please PR's own branch holds a single squashed commit, so we
+    // can't read the source commits from `pulls/{number}/commits`. Instead,
+    // walk `main` back to the last release tag and use that range.
+    const lastReleaseSha = await resolveLastReleaseSha(octokit, ctx);
+    const allCommits = await octokit.paginate(octokit.rest.repos.listCommits, {
         ...ctx,
-        pull_number: prNumber,
+        sha: baseBranch,
         per_page: 100,
     });
+    const candidates = [];
+    for (const c of allCommits) {
+        if (lastReleaseSha && c.sha === lastReleaseSha)
+            break;
+        candidates.push(c);
+    }
+    candidates.reverse(); // chronological: oldest first
     const sources = [];
-    for (const c of commits) {
-        const sha = c.sha;
-        const message = c.commit.message;
+    for (const c of candidates) {
         let prBody = null;
         try {
             const { data: associated } = await octokit.rest.repos.listPullRequestsAssociatedWithCommit({
                 ...ctx,
-                commit_sha: sha,
+                commit_sha: c.sha,
             });
             const merged = associated.find((p) => p.merged_at) ?? associated[0];
             if (merged?.body)
                 prBody = merged.body;
         }
         catch {
-            // Ignore — commit-to-PR association is best-effort.
+            // Best-effort.
         }
         sources.push({
-            sha,
-            shortSha: sha.slice(0, 7),
-            message,
+            sha: c.sha,
+            shortSha: c.sha.slice(0, 7),
+            message: c.commit.message,
             prBody,
         });
     }
     return sources;
+}
+async function resolveLastReleaseSha(octokit, ctx) {
+    let tagName;
+    try {
+        const { data: latestRelease } = await octokit.rest.repos.getLatestRelease({ ...ctx });
+        tagName = latestRelease.tag_name;
+    }
+    catch {
+        return null; // No releases yet — first release.
+    }
+    if (!tagName)
+        return null;
+    try {
+        const { data: ref } = await octokit.rest.git.getRef({
+            ...ctx,
+            ref: `tags/${tagName}`,
+        });
+        if (ref.object.type === "tag") {
+            // Annotated tag — dereference to commit.
+            const { data: tag } = await octokit.rest.git.getTag({
+                ...ctx,
+                tag_sha: ref.object.sha,
+            });
+            return tag.object.sha;
+        }
+        return ref.object.sha;
+    }
+    catch {
+        return null;
+    }
 }
 async function findExistingChecklistComment(octokit, ctx, prNumber) {
     const comments = await octokit.paginate(octokit.rest.issues.listComments, {
@@ -30196,8 +30235,8 @@ async function run() {
             return;
         }
         core.info(`Found Release Please PR #${pr.number}`);
-        const sources = await (0, github_1.listCommitSources)(octokit, ctx, pr.number);
-        core.info(`Loaded ${sources.length} commits from PR`);
+        const sources = await (0, github_1.listReleaseCandidateCommits)(octokit, ctx, baseBranch);
+        core.info(`Loaded ${sources.length} candidate commit(s) from ${baseBranch} since last release`);
         const withdrawnShas = (0, aggregate_1.computeWithdrawnShas)(sources);
         if (withdrawnShas.size > 0) {
             core.info(`Treating tags from ${withdrawnShas.size} reverted commit(s) as withdrawn`);
