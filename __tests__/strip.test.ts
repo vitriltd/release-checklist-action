@@ -57,6 +57,17 @@ describe("stripReleaseTagsFromText", () => {
     expect(stripReleaseTagsFromText("feat: x  [release: y]  rest")).toBe("feat: x rest");
   });
 
+  it("collapses to single space when two tags sit between the same content (multi-tag, mid-line)", () => {
+    // Real Release Please changelog line: a feat() commit with two [release: ...] tags
+    // followed by the SHA link. Without collapsing, two spaces are left between the
+    // description and the parenthesised SHA.
+    expect(
+      stripReleaseTagsFromText(
+        "* **api:** add health endpoint [release: smoke-test /healthz from prod] [release: notify on-call] ([abc1234](url))"
+      )
+    ).toBe("* **api:** add health endpoint ([abc1234](url))");
+  });
+
   it("does not touch tags inside fenced code blocks (changelog examples)", () => {
     // The Release Please PR body itself doesn't contain fenced code blocks
     // around tags, but if someone puts an example tag in a fenced block

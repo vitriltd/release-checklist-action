@@ -30323,7 +30323,7 @@ function stripFencedCodeBlocks(input) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.stripReleaseTagsFromText = stripReleaseTagsFromText;
-const TAG_PATTERN = /([ \t]*)\[release:[^\]\n]+?\]([ \t]*)/gi;
+const TAG_PATTERN = /\[release:[^\]\n]+?\]/gi;
 const FENCE_PATTERN = /^[ \t]*(?:```|~~~)/;
 function stripReleaseTagsFromText(text) {
     const lines = text.split("\n");
@@ -30344,14 +30344,10 @@ function stripReleaseTagsFromText(text) {
     return out.join("\n");
 }
 function stripTagsFromSingleLine(line) {
-    const stripped = line.replace(TAG_PATTERN, (match, _before, _after, offset) => {
-        const isAtStart = offset === 0;
-        const isAtEnd = offset + match.length === line.length;
-        if (isAtStart || isAtEnd)
-            return "";
-        return " ";
-    });
-    return stripped.replace(/[ \t]+$/, "");
+    return line
+        .replace(TAG_PATTERN, "")
+        .replace(/(\S)[ \t]{2,}/g, "$1 ")
+        .replace(/[ \t]+$/, "");
 }
 
 
