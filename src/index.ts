@@ -7,6 +7,7 @@ import {
   findExistingChecklistComment,
   findReleasePleasePR,
   listReleaseCandidateCommits,
+  stripTagsFromPRBody,
   upsertChecklistComment,
 } from "./github";
 
@@ -14,6 +15,7 @@ async function run(): Promise<void> {
   try {
     const token = core.getInput("github-token", { required: true });
     const baseBranch = core.getInput("base-branch") || "main";
+    const stripFromBody = core.getBooleanInput("strip-tags-from-pr-body");
 
     const octokit = github.getOctokit(token);
     const ctx = github.context.repo;
@@ -34,6 +36,13 @@ async function run(): Promise<void> {
     }
 
     const items = aggregateItems(sources, withdrawnShas);
+
+    if (stripFromBody) {
+      const stripped = await stripTagsFromPRBody(octokit, ctx, pr.number);
+      if (stripped) {
+        core.info(`Stripped [release: ...] tags from PR #${pr.number} body`);
+      }
+    }
 
     const existing = await findExistingChecklistComment(octokit, ctx, pr.number);
 

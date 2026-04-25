@@ -1,5 +1,6 @@
 import * as github from "@actions/github";
 import { MARKER } from "./comment";
+import { stripReleaseTagsFromText } from "./strip";
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
@@ -142,6 +143,19 @@ export async function findExistingChecklistComment(
     }
   }
   return null;
+}
+
+export async function stripTagsFromPRBody(
+  octokit: Octokit,
+  ctx: RepoContext,
+  prNumber: number
+): Promise<boolean> {
+  const { data: pr } = await octokit.rest.pulls.get({ ...ctx, pull_number: prNumber });
+  const original = pr.body ?? "";
+  const stripped = stripReleaseTagsFromText(original);
+  if (stripped === original) return false;
+  await octokit.rest.pulls.update({ ...ctx, pull_number: prNumber, body: stripped });
+  return true;
 }
 
 export async function upsertChecklistComment(

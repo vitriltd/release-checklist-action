@@ -13,6 +13,10 @@ inputs:
     description: The branch Release Please targets
     required: false
     default: main
+  strip-tags-from-pr-body:
+    description: "Whether to strip [release: ...] substrings from the Release Please PR body before posting the checklist. Keeps the resulting CHANGELOG.md clean. Set to false to leave tags inline."
+    required: false
+    default: "true"
 runs:
   using: node20
   main: dist/index.js

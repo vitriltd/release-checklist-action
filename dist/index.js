@@ -30057,8 +30057,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.findReleasePleasePR = findReleasePleasePR;
 exports.listReleaseCandidateCommits = listReleaseCandidateCommits;
 exports.findExistingChecklistComment = findExistingChecklistComment;
+exports.stripTagsFromPRBody = stripTagsFromPRBody;
 exports.upsertChecklistComment = upsertChecklistComment;
 const comment_1 = __nccwpck_require__(2246);
+const strip_1 = __nccwpck_require__(4173);
 async function findReleasePleasePR(octokit, ctx, baseBranch) {
     const headPrefix = `release-please--branches--${baseBranch}`;
     const { data: prs } = await octokit.rest.pulls.list({
@@ -30159,6 +30161,15 @@ async function findExistingChecklistComment(octokit, ctx, prNumber) {
     }
     return null;
 }
+async function stripTagsFromPRBody(octokit, ctx, prNumber) {
+    const { data: pr } = await octokit.rest.pulls.get({ ...ctx, pull_number: prNumber });
+    const original = pr.body ?? "";
+    const stripped = (0, strip_1.stripReleaseTagsFromText)(original);
+    if (stripped === original)
+        return false;
+    await octokit.rest.pulls.update({ ...ctx, pull_number: prNumber, body: stripped });
+    return true;
+}
 async function upsertChecklistComment(octokit, ctx, prNumber, body, existingCommentId) {
     if (existingCommentId !== null) {
         await octokit.rest.issues.updateComment({
@@ -30227,6 +30238,7 @@ async function run() {
     try {
         const token = core.getInput("github-token", { required: true });
         const baseBranch = core.getInput("base-branch") || "main";
+        const stripFromBody = core.getBooleanInput("strip-tags-from-pr-body");
         const octokit = github.getOctokit(token);
         const ctx = github.context.repo;
         const pr = await (0, github_1.findReleasePleasePR)(octokit, ctx, baseBranch);
@@ -30242,6 +30254,12 @@ async function run() {
             core.info(`Treating tags from ${withdrawnShas.size} reverted commit(s) as withdrawn`);
         }
         const items = (0, aggregate_1.aggregateItems)(sources, withdrawnShas);
+        if (stripFromBody) {
+            const stripped = await (0, github_1.stripTagsFromPRBody)(octokit, ctx, pr.number);
+            if (stripped) {
+                core.info(`Stripped [release: ...] tags from PR #${pr.number} body`);
+            }
+        }
         const existing = await (0, github_1.findExistingChecklistComment)(octokit, ctx, pr.number);
         if (items.length === 0 && !existing) {
             core.info("No release tags found and no existing comment. Nothing to post.");
@@ -30293,6 +30311,47 @@ function stripFencedCodeBlocks(input) {
         kept.push(inFence ? "" : line);
     }
     return kept.join("\n");
+}
+
+
+/***/ }),
+
+/***/ 4173:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.stripReleaseTagsFromText = stripReleaseTagsFromText;
+const TAG_PATTERN = /([ \t]*)\[release:[^\]\n]+?\]([ \t]*)/gi;
+const FENCE_PATTERN = /^[ \t]*(?:```|~~~)/;
+function stripReleaseTagsFromText(text) {
+    const lines = text.split("\n");
+    const out = [];
+    let inFence = false;
+    for (const line of lines) {
+        if (FENCE_PATTERN.test(line)) {
+            inFence = !inFence;
+            out.push(line);
+            continue;
+        }
+        if (inFence) {
+            out.push(line);
+            continue;
+        }
+        out.push(stripTagsFromSingleLine(line));
+    }
+    return out.join("\n");
+}
+function stripTagsFromSingleLine(line) {
+    const stripped = line.replace(TAG_PATTERN, (match, _before, _after, offset) => {
+        const isAtStart = offset === 0;
+        const isAtEnd = offset + match.length === line.length;
+        if (isAtStart || isAtEnd)
+            return "";
+        return " ";
+    });
+    return stripped.replace(/[ \t]+$/, "");
 }
 
 

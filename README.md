@@ -68,6 +68,7 @@ The `permissions` block is required — default `GITHUB_TOKEN` permissions are r
 |---|---|---|---|
 | `github-token` | yes | `${{ github.token }}` | Token with PR read/write |
 | `base-branch` | no | `main` | Branch Release Please targets |
+| `strip-tags-from-pr-body` | no | `true` | Strip `[release: ...]` substrings from the Release Please PR body so they don't end up in `CHANGELOG.md`. Set to `false` to leave them inline. |
 
 ## Output
 
@@ -97,8 +98,10 @@ v1 targets repos using Release Please in **single-package mode** (one open Relea
 ## Behavior details
 
 - **PR detection:** matches the open PR with head ref `release-please--branches--{base-branch}`, with fallback to PRs authored by `release-please[bot]`. If no Release Please PR is open, the action exits silently.
-- **Commit range:** reads commits from the Release Please PR's `pulls/{number}/commits` endpoint.
-- **PR body scanning:** for each commit, fetches the originating PR (if any) via `commits/{sha}/pulls` and scans its body for tags.
+- **Commit range:** walks `main` back to the last release tag and scans those commits. (Release Please's branch is a single squashed commit, so we read sources from `main` directly.)
+- **Feature PR scanning:** for each commit, fetches the originating PR (if any) via `commits/{sha}/pulls` and scans its body for tags. The Release Please PR's *own* body is never read for tags — it gets stripped and is not authoritative.
+- **Authoritative source:** commit messages. Feature PR descriptions are a secondary source. Tags only ever in the Release Please PR body would be lost on the next run, so don't rely on that.
+- **PR body stripping:** by default, strips `[release: ...]` substrings out of the Release Please PR body so they don't pollute `CHANGELOG.md` when the PR merges. Idempotent. Disable via `strip-tags-from-pr-body: false`.
 - **Deduplication:** identical tag text from multiple sources collapses to one item with all SHAs cited.
 - **Reverts:** `Revert "..."` commits referencing an in-range SHA cause that SHA's tags to be withdrawn.
 - **Empty case:** if a previous run had items but the current run has none (e.g. all tags reverted), the comment updates to "No items currently flagged" rather than leaving stale content. If there have never been any items, no comment is posted at all.

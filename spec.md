@@ -42,11 +42,14 @@ feat: new document store index [release: re-index docstore after deploy - see mi
 1. Triggers on every push to `main` (same event Release Please watches)
 2. Must run after the Release Please job (`needs: release-please`) so the PR exists before the comment logic fires
 3. Finds the currently open Release Please PR. If none exists yet, exits silently
-4. Enumerates commits directly from the Release Please PR via `pulls/{number}/commits` (rather than computing the diff from the last tag — Release Please already knows what's in the pending release)
-5. For each commit, checks the commit message and any associated PR description for `[release: ...]` tags
-6. Deduplicates: if the same tag text appears across multiple sources (commit message + PR body, or two separate commits), emit it once with all originating commits linked
+4. Enumerates commits on `main` since the last release tag (or all of `main` if there is no prior release). Release Please's own branch is a single squashed commit, so we read the source commits from `main` directly rather than from `pulls/{number}/commits`
+5. For each commit, checks the commit message **and any associated *feature* PR description** (the original squash-merged PR, fetched via `commits/{sha}/pulls`) for `[release: ...]` tags. The Release Please PR's own description is **not** scanned for tags — it gets stripped (step 8) and is never an authoritative source
+6. Deduplicates: if the same tag text appears across multiple sources (commit message + feature PR body, or two separate commits), emit it once with all originating commits linked
 7. **Preserves checkbox state from the existing comment** (see below)
-8. Upserts a single bot comment on the Release Please PR — created on first run, updated on subsequent pushes as more commits land
+8. **Strips `[release: ...]` substrings from the Release Please PR body** (collapsing any double-spaces or trailing whitespace left behind on the line) and PATCHes the body back, so the operational notes don't end up in `CHANGELOG.md` when the PR merges. Idempotent — Release Please regenerates the body on every push, so this runs every time
+9. Upserts a single bot comment on the Release Please PR — created on first run, updated on subsequent pushes as more commits land
+
+**Authoritative source for tags:** commit messages. Feature PR descriptions are scanned as a secondary source for tags developers wrote in the PR description rather than the commit. The Release Please PR description is never read for tags; it is rewritten on every run.
 
 ## Checkbox State Preservation
 
@@ -113,7 +116,7 @@ release-checklist-action/
 
 ```yaml
 name: Release Checklist
-description: Parses [release: ...] tags from commits and PRs and posts a sign-off checklist on the open Release Please PR
+description: "Parses [release: ...] tags from commits and PRs and posts a sign-off checklist on the open Release Please PR"
 inputs:
   github-token:
     description: GitHub token with PR read/write access
@@ -123,10 +126,16 @@ inputs:
     description: The branch Release Please targets
     required: false
     default: main
+  strip-tags-from-pr-body:
+    description: Whether to strip [release: ...] substrings from the Release Please PR body before posting the checklist. Keeps CHANGELOG.md clean. Set to false to leave tags inline.
+    required: false
+    default: "true"
 runs:
   using: node20
   main: dist/index.js
 ```
+
+The description must be quoted because YAML otherwise reads `[release: ...]` as a flow mapping and refuses to load the action.
 
 ## Consumer Usage
 
@@ -168,6 +177,16 @@ Optionally add `workflow_dispatch:` to the workflow's `on:` triggers so the rele
 - Release Please PR detection: match on open PRs from the `release-please--branches--{base-branch}` branch, with fallback to PRs authored by `release-please[bot]`
 - Reverted commits: if commit B has a `Revert "..."` subject referencing commit A's SHA and both are in the range, treat A's tags as withdrawn
 - Commit→PR association uses `commits/{sha}/pulls`. For a typical release of <100 commits this is fine; if it becomes a problem, switch to a single GraphQL query
+- Commit range: walk `main` back from HEAD until hitting the previous release tag (resolved via `repos/{owner}/{repo}/releases/latest`, dereferencing annotated tags). If no prior release, scan all of `main`. This is what the spec author originally meant by "Release Please knows what's in the pending release" — but the originally-named API (`pulls/{number}/commits`) returns Release Please's squashed branch commit, not the source commits
+
+## PR Body Stripping Notes
+
+- Match the same `[release: ...]` pattern as the parser
+- Eat any leading spaces/tabs that joined the tag to surrounding text. If the tag was at start-of-line or end-of-line, eat surrounding whitespace too. If the tag was mid-line (text on both sides), leave a single space
+- Trim trailing whitespace per line after stripping
+- Skip fenced code blocks — same posture as the parser. Tags inside fenced blocks (e.g. an example in a manually-edited PR body) are left intact
+- Idempotent: running on already-stripped text is a no-op
+- Only PATCH the PR body when the stripped result actually differs, so we don't churn the PR's `updated_at` on every run
 
 ## Tag Parser Notes
 
